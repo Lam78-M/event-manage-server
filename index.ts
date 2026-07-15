@@ -29,29 +29,110 @@ interface BookingPayload {
 const uri = process.env.MONGODB_URI;
 if (!uri) throw new Error("Critical Error: MONGODB_URI is not defined!");
 
-const client = new MongoClient(uri);
+const client = new MongoClient(uri, {
+  maxPoolSize: 10,              // একসঙ্গে ১০টি ডাটা পাইপলাইন সচল রাখবে
+  serverSelectionTimeoutMS: 5000 // ৫ সেকেন্ডে কানেক্ট না হলে রিলিজ করে দেবে, ২ মিনিট ঝুলাবে না
+});
 
 // গ্লোবাল স্কোপে কালেকশন দুটির টাইপ ডিফাইন করা হলো
 let eventCollection: Collection;
 let eventBookings: Collection; 
 let eventUserCollection: Collection;
+let isConnected = false;
 
 export async function connectToMongoDB() {
   try {
+    if (isConnected) return client; // ⚡ অলরেডি কানেক্টেড থাকলে সাথে সাথে রিটার্ন করবে
+
     await client.connect();
     console.log("🚀 You successfully connected to MongoDB Cluster Stream!");
     const database = client.db("event-management");
     
     eventCollection = database.collection("eventmanaging");
     eventBookings = database.collection("eventBookings"); 
-    eventUserCollection = database.collection("user")
+    eventUserCollection = database.collection("user");
 
-
+    isConnected = true; // 👈 কানেকশন সাকসেস হলে true করে দেবে
     return client;
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
+    isConnected = false;
   }
 }
+
+// manage event for organizer dashboard
+
+app.delete("/api/eventmanage/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id;
+    
+    // মঙ্গোডিবি আইডি ভ্যালিডেশন
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid Event Identifier." });
+    }
+
+    const result = await eventCollection.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 1) {
+      return res.status(200).json({ success: true, message: "Event payload deleted successfully from active cluster." });
+    } else {
+      return res.status(404).json({ success: false, message: "Event node not found." });
+    }
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get("/api/events/count", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const totalEvents = await eventCollection.countDocuments({}); // তোমার event collection name
+    return res.status(200).json({ count: totalEvents });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+//users 
+
+app.get("/api/users", async (req: Request, res: Response): Promise<any> => {
+  try {
+    // 🎯 তোমার কালেকশন থেকে সব ইউজার অ্যারে হিসেবে নেওয়া হচ্ছে
+    const users = await eventUserCollection.find({}).toArray();
+    return res.status(200).json(users);
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+//udate evets
+
+// import { ObjectId } from "mongodb"; // 🎯 ওপরে ইম্পোর্ট করো
+
+app.patch("/api/eventmanage/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { title, date, tickets, price, location } = req.body;
+
+    // 🎯 তোমার আসল কালেকশন "eventmanaging" ব্যবহার করা হলো
+    const result = await eventCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          title,
+          date,
+          tickets: Number(tickets) || 0,
+          price,
+          location,
+        }
+      }
+    );
+
+    return res.status(200).json({ success: true, message: "Updated!" });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 /* ==========================================================
    👤 GET ROUTE: Fetch Current User Profile Details
@@ -91,6 +172,9 @@ app.get("/api/userprofile", async (req: Request, res: Response) => {
      return;
   }
 });
+
+
+
 
 /* ==========================================================
    🎟️ 1. POST ROUTE: Launch New Booking Stream
@@ -144,6 +228,68 @@ app.post("/api/mybookings", async (req: Request, res: Response) => {
      return;
   }
 });
+
+app.patch("/api/users/:id/pending", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid User ID format." });
+    }
+
+    const result = await eventUserCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { approved: false } } // approved আবার false (Pending) করে দেওয়া হলো
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, message: "User node not found." });
+    }
+    return res.status(200).json({ success: true, message: "User access temporarily suspended!" });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.patch("/api/users/:id/approve", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid User ID format." });
+    }
+
+    const result = await eventUserCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { approved: true } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, message: "User node not found." });
+    }
+    return res.status(200).json({ success: true, message: "User approved successfully!" });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 🎯 ৩. ইউজার ডিলিট/রিজেক্ট করার API (DELETE)
+app.delete("/api/users/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid User ID format." });
+    }
+
+    const result = await eventUserCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, message: "User node not found." });
+    }
+    return res.status(200).json({ success: true, message: "User successfully deleted." });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 
 /* ==========================================================
    📡 2. GET ROUTE: Synchronize Active System Booking Streams
@@ -301,4 +447,4 @@ const startServer = async () => {
   });
 };
 
-startServer();
+startServer(); 
