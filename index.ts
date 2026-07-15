@@ -44,7 +44,7 @@ export async function connectToMongoDB() {
   try {
     if (isConnected) return client; // ⚡ অলরেডি কানেক্টেড থাকলে সাথে সাথে রিটার্ন করবে
 
-    await client.connect();
+    // await client.connect();
     console.log("🚀 You successfully connected to MongoDB Cluster Stream!");
     const database = client.db("event-management");
     
