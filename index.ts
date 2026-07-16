@@ -49,7 +49,7 @@ export async function connectToMongoDB() {
     
     eventCollection = database.collection("eventmanaging");
     eventBookings = database.collection("eventBookings"); 
-    eventUserCollection = database.collection("users");
+    eventUserCollection = database.collection("user");
 
     isConnected = true; 
     return client;
